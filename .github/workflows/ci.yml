@@ -1,0 +1,24 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      # on Windows this also rebuilds every sample from source with csc.exe and checks the answers again
+      - name: parsers, extractors, chains, command line, 600 mutated samples
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m unittest discover -s tests -t . -v
