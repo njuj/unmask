@@ -2,6 +2,8 @@
 
 **Follow a malware delivery chain to the RAT at its end, and find out who controls it.**
 
+<p align="center"><img src="docs/demo.svg" width="100%" alt="unmask running in a terminal"/></p>
+
 Most RAT infections today are not one file. A fake game cheat or "FPS booster" carries a loader;
 the loader hides an encrypted payload in a resource, an overlay or a script; the payload is XWorm or
 njRAT. `unmask` opens each stage, peels off whatever wraps the next one, and keeps going until it
