@@ -20,7 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="unmask",
         description="Unwrap a malware sample stage by stage (bait, loader, payload) without running it, and extract "
                     "the RAT configuration at the end: C2 hosts and ports, keys, mutex, install paths, Telegram bot. "
-                    "Decodes njRAT and XWorm; recognises the AsyncRAT family.")
+                    "Decodes njRAT, XWorm, AsyncRAT, DcRat and VenomRAT.")
     ap.add_argument("files", nargs="+", type=Path, help="samples, or folders of samples")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     ap.add_argument("--iocs", metavar="FILE", help="write C2s, next-stage URLs and hashes, one per line")

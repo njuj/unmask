@@ -70,3 +70,33 @@ XWORM_OBF = {
 }
 
 BAIT_KEY = b"kira-unmask!"
+
+# AsyncRAT 0.5.7B: the builder's field names; every value sealed with AES-256-CBC + HMAC under PBKDF2(Key, salt)
+ASYNCRAT = {
+    "Ports": "6606,7707",
+    "Hosts": "kira-lab-async.duckdns.org",
+    "Version": "0.5.7B",
+    "Install": "true",
+    "InstallFolder": "%AppData%",
+    "InstallFile": "WindowsDefender.exe",
+    "MTX": "AsyncMutex_6SI8OkPnk",
+    "Pastebin": "null",
+    "Anti": "false",
+    "BDOS": "false",
+    "Group": "Default",
+}
+ASYNCRAT_KEY = "R3VRb2x1N3BCYzhKMnRWcTZ4WmY0bkVtOWtEMXNIYTA="   # base64 of the master key string
+
+# DcRat after an obfuscator renamed every field; its own salt, a second C2 behind a pastebin
+DCRAT_OBF = {
+    "Ports": "8848",
+    "Hosts": "203.0.113.45,kira-lab-dc.ddns.net",
+    "Version": "1.0.7",
+    "Install": "false",
+    "InstallFolder": "%Temp%",
+    "InstallFile": "dllhost.exe",
+    "MTX": "DcRatMutex_qwqdanchun",
+    "Pastebin": "https://pastebin.com/raw/kiraLab0",
+    "Group": "kira-lab",
+}
+DCRAT_KEY = "UzlwWDJ2TDZrUThtUjRuVzF6VDdjWTNoRjVnQjBqRWQ="

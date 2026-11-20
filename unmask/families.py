@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import hmac
 import re
 from dataclasses import dataclass, field
 
@@ -260,22 +261,179 @@ def _xworm_shape(s: str, raw, seen: dict, mutex: str) -> str | None:
     return None
 
 
-# ── AsyncRAT family (recognised; extraction comes later) ─────────────────────
+# ── AsyncRAT family: AsyncRAT, DcRat, VenomRAT ───────────────────────────────
+# Every value is sealed by the client's Aes256 class: PBKDF2-SHA1 over the base64-decoded Key field
+# (50,000 rounds) gives a 32-byte AES key and a 64-byte HMAC key; a value is HMAC-SHA256 (32) | IV (16) |
+# AES-256-CBC ciphertext. The HMAC confirms a key and salt pair outright, so candidates are tried, never guessed.
 
-ASYNC_FIELDS = {"Por_ts", "Hos_ts", "Ver_sion", "In_stall", "Install_Folder", "Install_File", "MTX", "Certificate",
-                "Serversignature", "Pastebin", "BDOS", "Anti", "Hwid", "Group", "Ports", "Hosts", "Version", "Key"}
+ASYNC_SALTS = [
+    bytes.fromhex("bfeb1e56fbcd973bb219022430a57843003d5644d21e62b9d4f180e7e6c33941"),   # AsyncRAT
+    b"bfeb1e56fbcd973bb219022430a57843003d5644d21e62b9d4f180e7e6c33941",                # the same, as text
+    b"DcRatByqwqdanchun",                                                              # DcRat
+    b"VenomRATByVenom",                                                                # VenomRAT
+]
+SALT_NAMES = ["AsyncRAT's salt", "AsyncRAT's salt as text", '"DcRatByqwqdanchun"', '"VenomRATByVenom"']
+ASYNC_LABELS = {
+    "hosts": "C2 hosts", "ports": "C2 ports", "version": "Version", "install": "Installs itself",
+    "installfolder": "Install folder", "installfile": "Installed as", "mtx": "Mutex", "pastebin": "Pastebin URL",
+    "anti": "Anti-analysis", "antiprocess": "Kills analysis tools", "bsod": "BSOD if the process is killed",
+    "bdos": "BSOD if the process is killed", "group": "Group / campaign", "delay": "Start-up delay (seconds)",
+    "certificate": "Server certificate", "serversignature": "Server signature", "key": "Master key",
+}
+ASYNC_ORDER = ["C2 hosts", "C2 ports", "Version", "Group / campaign", "Mutex", "Installs itself", "Install folder",
+               "Installed as", "Anti-analysis", "Kills analysis tools", "BSOD if the process is killed",
+               "Start-up delay (seconds)"]
+MAX_KDF = 40                                     # PBKDF2 runs per type, 50,000 rounds each
+
+
+def _norm(name: str) -> str:
+    return re.sub(r"[^a-z]", "", name.lower())
+
+
+def _async_blob(v: str) -> bytes | None:
+    if len(v) < 88 or len(v) % 4 or not re.fullmatch(r"[A-Za-z0-9+/]+={0,2}", v):
+        return None
+    try:
+        b = base64.b64decode(v, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    return b if len(b) >= 64 and (len(b) - 48) % 16 == 0 else None
+
+
+def async_keys(password: bytes, salt: bytes) -> tuple[bytes, bytes]:
+    out = hashlib.pbkdf2_hmac("sha1", password, salt, 50000, 96)
+    return out[:32], out[32:]
+
+
+def async_decrypt(aes_key: bytes, auth_key: bytes, blob: bytes) -> bytes | None:
+    """None unless the HMAC matches: a wrong key or salt never yields text."""
+    if not hmac.compare_digest(hmac.new(auth_key, blob[32:], hashlib.sha256).digest(), blob[:32]):
+        return None
+    return aes.decrypt_cbc(aes_key, blob[32:48], blob[48:])
+
+
+def _async_salts(asm: Assembly, t: TypeInfo):
+    yield from ASYNC_SALTS
+    seen = set(ASYNC_SALTS)
+    texts = [v for v in t.values.values() if isinstance(v, str)] + asm.user_strings
+    for cand in [a.data for a in asm.arrays if 16 <= len(a.data) <= 64] + [s.encode() for s in texts if 8 <= len(s) <= 80]:
+        if cand not in seen:
+            seen.add(cand)
+            yield cand
 
 
 def asyncrat(asm: Assembly) -> Config | None:
     for t in asm.types:
-        hits = ASYNC_FIELDS & set(t.values)
-        if len(hits) >= 6 and ("Certificate" in hits or "Serversignature" in hits):
-            dc = any("dcrat" in s.lower() for s in asm.user_strings + asm.names)
-            cfg = Config("DcRat" if dc else "AsyncRAT-family", location=t.full)
-            cfg.add("Status", "recognised", "this family's configuration (AES-256-CBC + HMAC, PBKDF2 key) "
-                                             "is not decrypted yet in this version")
+        strings = {k: v for k, v in t.values.items() if isinstance(v, str)}
+        blobs = {k: b for k, v in strings.items() if (b := _async_blob(v)) is not None}
+        if len(blobs) >= 3:
+            # the master key: base64 of a printable string; the builder's own field name first
+            keys = [(k, s) for k, v in strings.items() if k not in blobs and (s := _b64text(v)) and 8 <= len(s) <= 128]
+            keys.sort(key=lambda kv: _norm(kv[0]) != "key")
+            probe = min(blobs.values(), key=len)
+            runs = 0
+            for kname, password in keys:
+                for salt in _async_salts(asm, t):
+                    if runs >= MAX_KDF:
+                        break
+                    runs += 1
+                    ak, hk = async_keys(password.encode("utf-8"), salt)
+                    if async_decrypt(ak, hk, probe) is None:
+                        continue
+                    plain = {k: _plain(async_decrypt(ak, hk, b)) for k, b in blobs.items()}
+                    return _async_config(asm, t, strings, {k: v for k, v in plain.items() if v is not None}, kname, salt)
+        hits = {_norm(k) for k in t.values} & set(ASYNC_LABELS)
+        if len(hits) >= 6 and ("certificate" in hits or "serversignature" in hits):
+            cfg = Config(_async_family(asm, ""), location=t.full)
+            cfg.add("Status", "recognised", "no key and salt pair passed the HMAC check, values left sealed")
             return cfg
     return None
+
+
+def _cert_names(der: bytes) -> list[str]:
+    """Every commonName in a DER certificate (issuer first, then subject)."""
+    out, i = [], 0
+    while (i := der.find(b"\x06\x03\x55\x04\x03", i)) != -1 and i + 7 <= len(der):
+        tag, n = der[i + 5], der[i + 6]
+        if tag in (0x0C, 0x13, 0x14, 0x16) and n < 0x80 and i + 7 + n <= len(der):
+            out.append(der[i + 7:i + 7 + n].decode("utf-8", "replace"))
+        i += 5
+    return out
+
+
+def _cert_of(v: str) -> str:
+    if len(v) < 60 or not re.fullmatch(r"[A-Za-z0-9+/]+={0,2}", v):
+        return ""
+    try:
+        names = _cert_names(base64.b64decode(v + "=" * (-len(v) % 4)))
+    except (binascii.Error, ValueError):
+        return ""
+    return names[-1] if names else ""
+
+
+def _async_family(asm: Assembly, hint: str) -> str:
+    text = (hint + " " + " ".join(asm.user_strings + asm.names)).lower()
+    if "venom" in text:
+        return "VenomRAT"
+    if "dcrat" in text or "qwqdanchun" in text:
+        return "DcRat"
+    return "AsyncRAT"
+
+
+def _async_shape(s: str, seen: dict) -> str | None:
+    if re.fullmatch(r"\d{1,5}(?:\s*,\s*\d{1,5})*", s) and all(_port(p.strip()) for p in s.split(",")):
+        return "C2 ports" if "C2 ports" not in seen else "Start-up delay (seconds)"
+    if _hosts(s):
+        return "C2 hosts"
+    if s.lower() in ("true", "false"):
+        return None                                   # several flags share this shape: not labelled blind
+    if s.lower().startswith("http") or s == "null":
+        return "Pastebin URL"
+    if re.fullmatch(r"%\w+%", s):
+        return "Install folder"
+    if s.lower().endswith(".exe"):
+        return "Installed as"
+    if re.fullmatch(r"[A-Za-z]+_[A-Za-z0-9]{6,}", s) or "mutex" in s.lower():
+        return "Mutex"
+    if re.fullmatch(r"[\w +]*?v?\s*\d+\.\d+(?:\.\d+)*[A-Za-z]?", s):
+        return "Version"
+    return None
+
+
+def _async_config(asm: Assembly, t: TypeInfo, strings: dict, plain: dict, kname: str, salt: bytes) -> Config:
+    renamed = sum(_norm(k) in ASYNC_LABELS for k in t.values) < 4
+    by_label: dict[str, str] = {}
+    cert_cn = ""
+    for k, v in {**strings, **plain}.items():
+        if k == kname:
+            continue
+        if not cert_cn and (cn := _cert_of(v)):
+            cert_cn = cn
+            continue
+        label = _async_shape(v, by_label) if renamed else ASYNC_LABELS.get(_norm(k))
+        if label and label not in ("Server signature", "Master key", "Server certificate"):
+            by_label.setdefault(label, v)
+    family = _async_family(asm, cert_cn + " " + by_label.get("Version", ""))
+    salt_name = (SALT_NAMES[ASYNC_SALTS.index(salt)] if salt in ASYNC_SALTS
+                 else f"salt found in the sample {salt[:24].decode('latin-1')!r}")
+    cfg = Config(family, location=t.full, renamed=renamed,
+                 key_note=f"AES-256-CBC + HMAC-SHA256, keys = PBKDF2-SHA1(Key, {salt_name}, 50,000), HMAC verified",
+                 raw=[v for v in strings.values() if 8 <= len(v) <= 200])
+    cfg.version = by_label.get("Version", "")
+    ports = [p.strip() for p in by_label.get("C2 ports", "").split(",") if p.strip()]
+    for h in _hosts(by_label.get("C2 hosts", "")):
+        for port in ports or ["?"]:
+            cfg.c2.append((h, port))
+    pb = by_label.get("Pastebin URL", "")
+    if pb.lower().startswith("http"):
+        cfg.remote_config.append(pb)
+    for label in ASYNC_ORDER:
+        v = by_label.get(label)
+        if v and label != "Pastebin URL":            # a URL is listed once, defanged, as remote config
+            cfg.add(label, v)
+    if cert_cn:
+        cfg.add("Server certificate", f"CN={cert_cn}", "pinned in the client, the C2 presents it: hunt for it")
+    return cfg
 
 
 EXTRACTORS = [xworm, njrat, asyncrat]

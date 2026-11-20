@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import os
 import subprocess
 import sys
@@ -20,8 +21,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[1]))
 
-from unmask.aes import encrypt_ecb  # noqa: E402
-from tests.fixtures.values import NJRAT, NJRAT_LIME, XWORM, XWORM_OBF, BAIT_KEY  # noqa: E402
+from unmask.aes import encrypt_cbc, encrypt_ecb  # noqa: E402
+from tests.fixtures.values import (NJRAT, NJRAT_LIME, XWORM, XWORM_OBF, BAIT_KEY, ASYNCRAT, ASYNCRAT_KEY,  # noqa: E402
+                                   DCRAT_OBF, DCRAT_KEY)
 
 CSC = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Microsoft.NET" / "Framework64" / "v4.0.30319" / "csc.exe"
 
@@ -106,6 +108,78 @@ namespace Stub
 """
 
 
+ASYNC_SALT = bytes.fromhex("bfeb1e56fbcd973bb219022430a57843003d5644d21e62b9d4f180e7e6c33941")
+
+
+def async_enc(password: str, salt: bytes, value: str, n: int) -> str:
+    """AsyncRAT's Aes256.Encrypt: HMAC-SHA256 | IV | AES-256-CBC, keys from PBKDF2-SHA1(password, salt, 50,000)."""
+    keys = hashlib.pbkdf2_hmac("sha1", password.encode(), salt, 50000, 96)
+    iv = hashlib.md5(f"iv{n}".encode()).digest()                   # fixed IVs: the build is reproducible
+    body = iv + encrypt_cbc(keys[:32], iv, value.encode())
+    return base64.b64encode(hmac.new(keys[32:], body, hashlib.sha256).digest() + body).decode()
+
+
+def der_name_only(cn: str) -> bytes:
+    """Not a full certificate: just the DER Name an X.509 issuer and subject hold, which is all unmask reads."""
+    def tlv(tag: int, body: bytes) -> bytes:
+        return bytes([tag, len(body)]) + body
+    name = tlv(0x30, tlv(0x31, tlv(0x30, b"\x06\x03\x55\x04\x03" + tlv(0x0C, cn.encode()))))
+    return tlv(0x30, name + name)
+
+
+def asyncrat_source(cfg: dict, key_b64: str, salt_cs: str, names: dict, cn: str) -> str:
+    password = base64.b64decode(key_b64).decode()
+    salt = ASYNC_SALT if "0xBF" in salt_cs else salt_cs.split('"')[1].encode()
+    values = dict(cfg)
+    values["Certificate"] = base64.b64encode(der_name_only(cn)).decode()
+    values["Serversignature"] = base64.b64encode(hashlib.sha256(cn.encode()).digest() * 4).decode()
+    lines = [f"        public static string {names.get(k, k)} = {cs_str(async_enc(password, salt, v, i))};"
+             for i, (k, v) in enumerate(values.items())]
+    lines.append(f"        public static string {names.get('Key', 'Key')} = {cs_str(key_b64)};")
+    return f"""using System;
+using System.IO;
+using System.Security.Cryptography;
+using System.Text;
+namespace Client
+{{
+    public static class Settings
+    {{
+{chr(10).join(lines)}
+    }}
+    public class Aes256
+    {{
+        private static readonly byte[] Salt = {salt_cs};
+        private readonly byte[] _key;
+        private readonly byte[] _authKey;
+        public Aes256(string masterKey)
+        {{
+            using (Rfc2898DeriveBytes derive = new Rfc2898DeriveBytes(masterKey, Salt, 50000))
+            {{
+                _key = derive.GetBytes(32);
+                _authKey = derive.GetBytes(64);
+            }}
+        }}
+        public string Decrypt(string input)
+        {{
+            byte[] data = Convert.FromBase64String(input);
+            using (AesCryptoServiceProvider aes = new AesCryptoServiceProvider())
+            {{
+                aes.Key = _key;
+                byte[] iv = new byte[16];
+                Array.Copy(data, 32, iv, 0, 16);
+                aes.IV = iv;
+                return Encoding.UTF8.GetString(aes.CreateDecryptor().TransformFinalBlock(data, 48, data.Length - 48));
+            }}
+        }}
+    }}
+    public static class Program
+    {{
+        public static void Main() {{ }}
+    }}
+}}
+"""
+
+
 BAIT = """using System;
 using System.Reflection;
 namespace FpsBooster
@@ -153,6 +227,10 @@ def main(out: Path) -> None:
     compile_cs(xworm_source(XWORM, {}, "Decrypt"), out / "xworm_v5.exe")
     compile_cs(xworm_source(XWORM_OBF, {k: f"x{i:02d}" for i, k in enumerate(XWORM_OBF)}, "a"),
                out / "xworm_obfuscated.exe")
+    compile_cs(asyncrat_source(ASYNCRAT, ASYNCRAT_KEY, "new byte[] { 0xBF, 0xEB, 0x1E, 0x56, 0xFB, 0xCD, 0x97, 0x3B, 0xB2, 0x19, 0x02, 0x24, 0x30, 0xA5, 0x78, 0x43, 0x00, 0x3D, 0x56, 0x44, 0xD2, 0x1E, 0x62, 0xB9, 0xD4, 0xF1, 0x80, 0xE7, 0xE6, 0xC3, 0x39, 0x41 }", {}, "AsyncRAT Server"), out / "asyncrat.exe")
+    compile_cs(asyncrat_source(DCRAT_OBF, DCRAT_KEY, 'Encoding.ASCII.GetBytes("DcRatByqwqdanchun")',
+                               {k: f"c{i:02d}" for i, k in enumerate(list(DCRAT_OBF) + ["Certificate", "Serversignature", "Key"])},
+                               "DcRat Server"), out / "dcrat_obfuscated.exe")
     # the bait: a "booster" whose .resources hide the njRAT stub, XOR'd with a 12-byte key
     payload = (out / "njrat_07d.exe").read_bytes()
     hidden = bytes(b ^ BAIT_KEY[i % len(BAIT_KEY)] for i, b in enumerate(payload))

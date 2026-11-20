@@ -153,10 +153,39 @@ class CommandLine(unittest.TestCase):
     def test_folder_input(self):
         r = self.run_cli(str(BIN))
         self.assertEqual(r.returncode, 1)
-        self.assertEqual(r.stdout.count("configuration  ·  stage"), 5)    # 2 njRAT, 2 XWorm, 1 via the bait
+        self.assertEqual(r.stdout.count("configuration  ·  stage"), 7)    # 2 njRAT, 2 XWorm, AsyncRAT, DcRat, 1 via the bait
 
 
 @unittest.skipUnless(sys.platform == "win32" and shutil.which("powershell"), "rebuilding needs Windows' csc.exe")
+class AsyncFamily(unittest.TestCase):
+    def test_asyncrat_builder_names(self):
+        cfg = trace(sample("asyncrat"), "asyncrat").config
+        self.assertEqual((cfg.family, cfg.version, cfg.renamed), ("AsyncRAT", "0.5.7B", False))
+        self.assertEqual(cfg.c2, [("kira-lab-async.duckdns.org", "6606"), ("kira-lab-async.duckdns.org", "7707")])
+        items = {i.label: i.value for i in cfg.items}
+        self.assertEqual(items["Mutex"], values.ASYNCRAT["MTX"])
+        self.assertEqual(items["Installed as"], "WindowsDefender.exe")
+        self.assertEqual(items["Server certificate"], "CN=AsyncRAT Server")
+        self.assertIn("HMAC verified", cfg.key_note)
+
+    def test_dcrat_renamed_fields_own_salt_and_pastebin(self):
+        cfg = trace(sample("dcrat_obfuscated"), "dcrat").config
+        self.assertEqual((cfg.family, cfg.version, cfg.renamed), ("DcRat", "1.0.7", True))
+        self.assertEqual(cfg.c2, [("203.0.113.45", "8848"), ("kira-lab-dc.ddns.net", "8848")])
+        self.assertEqual(cfg.remote_config, [values.DCRAT_OBF["Pastebin"]])
+        self.assertIn("DcRatByqwqdanchun", cfg.key_note)
+        self.assertNotIn("Pastebin URL", {i.label for i in cfg.items})
+
+    def test_wrong_salt_never_decrypts(self):
+        from unmask import families
+        from tests.fixtures.build import async_enc
+        blob = base64.b64decode(async_enc("pw", b"right-salt-0000", "kira-lab.example", 0))
+        good = families.async_keys(b"pw", b"right-salt-0000")
+        bad = families.async_keys(b"pw", b"wrong-salt-0000")
+        self.assertEqual(families.async_decrypt(*good, blob), b"kira-lab.example")
+        self.assertIsNone(families.async_decrypt(*bad, blob))
+
+
 class Rebuilt(unittest.TestCase):
     """The committed samples rebuilt from source with today's compiler must give the same answers."""
 
@@ -169,7 +198,9 @@ class Rebuilt(unittest.TestCase):
                            cwd=ROOT, env=ENV, capture_output=True)
             for name, family, c2 in (("njrat_07d", "njRAT", ("kira-lab-c2.ddns.net", "5552")),
                                      ("xworm_v5", "XWorm", ("kira-lab-c2.duckdns.org", "7000")),
-                                     ("xworm_obfuscated", "XWorm", ("4.tcp.eu.ngrok.io", "13377"))):
+                                     ("xworm_obfuscated", "XWorm", ("4.tcp.eu.ngrok.io", "13377")),
+                                     ("asyncrat", "AsyncRAT", ("kira-lab-async.duckdns.org", "6606")),
+                                     ("dcrat_obfuscated", "DcRat", ("203.0.113.45", "8848"))):
                 root = trace(Path(d, f"{name}.exe").read_bytes(), name)
                 self.assertEqual(root.config.family, family)
                 self.assertEqual(root.config.c2[0], c2)

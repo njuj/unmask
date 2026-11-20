@@ -7,8 +7,8 @@
 <p align="center"><img src="docs/demo.svg" width="100%" alt="unmask running in a terminal"/></p>
 
 Most RAT infections today are not one file. A fake game cheat or "FPS booster" carries a loader;
-the loader hides an encrypted payload in a resource, an overlay or a script; the payload is XWorm or
-njRAT. `unmask` opens each stage, peels off whatever wraps the next one, and keeps going until it
+the loader hides an encrypted payload in a resource, an overlay or a script; the payload is XWorm,
+njRAT, AsyncRAT, DcRat or VenomRAT. `unmask` opens each stage, peels off whatever wraps the next one, and keeps going until it
 reaches the RAT, then decrypts its configuration the way the RAT itself does at start-up.
 
 It never runs the sample, never downloads a stage from the attacker's server, and never connects to a C2.
@@ -68,7 +68,7 @@ to have it removed.
 |---|---|
 | **njRAT** (0.7d and the 0.7NC / Lime-style editions) | C2 host and port (also when Base64-encoded), victim name / campaign, version, separator, install name and folder, registry key, BSOD-on-kill, install / Startup-folder / Run-key flags |
 | **XWorm** (the AES-MD5(mutex) scheme of 3.x–5.x) | every field decrypted: C2 hosts, port, encryption key, separator, group, mutex, install folder and name, USB spreader name, keylogger file, sleep, Telegram bot token and chat ID (or "not used"), pastebin-mode C2 URL |
-| AsyncRAT, DcRat | recognised and reported; decryption comes in a later version |
+| **AsyncRAT**, **DcRat**, **VenomRAT** (PBKDF2 + AES-256-CBC + HMAC scheme) | every field decrypted: C2 hosts × ports, version, group, mutex, install flag, folder and name, anti-analysis and BSOD flags, pastebin-mode C2 URL, and the pinned server certificate's name (`CN=AsyncRAT Server`, `CN=DcRat Server`). The salt is tried from the known builders' salts and then from the sample's own byte arrays and strings; the HMAC confirms the right one, so a decrypted value is never a guess |
 
 **Obfuscated builds still work.** When an obfuscator renames the `Settings` fields, the mutex is
 found among the plain-text values by trying each as the key, and every decrypted value is
@@ -116,8 +116,8 @@ live malware.
 ## Tests
 
 Samples are built with the real C# compiler and .NET's own `ResourceWriter`: inert classes holding a
-configuration in exactly the layout njRAT and XWorm builders write (field names, encodings, the
-AES-MD5(mutex) scheme), including an XWorm build with every field and method renamed, and a "booster"
+configuration in exactly the layout njRAT, XWorm and AsyncRAT builders write (field names, encodings,
+the AES-MD5(mutex) and PBKDF2 + HMAC schemes), including XWorm and DcRat builds with every field renamed, and a "booster"
 bait carrying njRAT XOR'd in its resources. The binaries are committed with their source; on Windows CI
 they are rebuilt from source and checked again. No live malware is in this repository or was used to
 build it, so new builder versions that change the layout need a sample to confirm; issues welcome.
