@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "unmask-rat"
 dynamic = ["version"]
-description = "Unwrap a malware delivery chain stage by stage without running it, and extract the RAT configuration at its end: njRAT and XWorm C2 hosts, ports, keys, mutex, Telegram bot, plus where to report them. Zero dependencies."
+description = "Unwrap a malware delivery chain stage by stage without running it, and extract the RAT configuration at its end: njRAT, XWorm, AsyncRAT, DcRat and VenomRAT C2 hosts, ports, keys, mutex, Telegram bot, plus where to report them. Zero dependencies."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
 authors = [{ name = "kira", email = "286490266+njuj@users.noreply.github.com" }]
-keywords = ["malware-analysis", "config-extractor", "njrat", "xworm", "rat", "c2", "reverse-engineering", "dfir", "threat-intel", "blue-team"]
+keywords = ["malware-analysis", "config-extractor", "njrat", "xworm", "asyncrat", "dcrat", "venomrat", "rat", "c2", "reverse-engineering", "dfir", "threat-intel", "blue-team"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",

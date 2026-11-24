@@ -1,5 +1,9 @@
 # unmask
 
+[![ci](https://github.com/njuj/unmask/actions/workflows/ci.yml/badge.svg)](https://github.com/njuj/unmask/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)
+
 **Follow a malware delivery chain to the RAT at its end, and find out who controls it.**
 
 <p align="center"><img src="docs/banner.svg" width="100%" alt="unmask: how it works"/></p>
